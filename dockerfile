@@ -1,16 +1,16 @@
-FROM node:18-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code and dataset
 COPY . .
 
-RUN mkdir -p uploads
-
+# Expose port 7860 (Hugging Face default)
 EXPOSE 7860
 
-ENV PORT=7860
-
-CMD ["node", "server.js"]
+# Run uvicorn server for Python FastAPI
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
