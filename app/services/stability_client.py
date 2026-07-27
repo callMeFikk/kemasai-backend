@@ -226,14 +226,14 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
     ]
 
     def fetch_single_sample(idx: int) -> str | None:
-        # Stagger initial request by 0.35s per index to prevent burst rate limit (429)
-        time.sleep(0.35 * idx)
+        # Stagger initial request by 0.6s per index to prevent burst rate limit (429)
+        time.sleep(0.6 * idx)
 
         variation = style_variations[idx % len(style_variations)]
         sample_prompt = clean_prompt + variation
         encoded = urllib.parse.quote(sample_prompt)
 
-        max_retries = 3
+        max_retries = 4
         for attempt in range(max_retries):
             seed = random.randint(10000, 999999)
             url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
@@ -252,7 +252,7 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
                         return b64
             except urllib.error.HTTPError as he:
                 if he.code == 429:
-                    wait_time = 0.8 * (attempt + 1) + random.uniform(0.1, 0.4)
+                    wait_time = 1.2 * (attempt + 1) + random.uniform(0.2, 0.6)
                     print(f"[POLLINATIONS RETRY] Sample {idx+1} hit 429, retrying in {wait_time:.1f}s (attempt {attempt+1}/{max_retries})...")
                     time.sleep(wait_time)
                 else:
@@ -273,8 +273,9 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
                 images.append(res)
 
     if images:
+        orig_count = len(images)
         while len(images) < 4:
-            images.append(images[len(images) % len(images)])
+            images.append(images[len(images) % orig_count])
         return images
 
     raise HTTPException(
