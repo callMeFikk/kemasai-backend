@@ -20,8 +20,8 @@ def get_dataset_dir() -> Path:
 
     base_backend_dir = Path(__file__).resolve().parent.parent.parent  # backend/
     candidates = [
-        base_backend_dir.parent / "assets" / "dataset",  # app_desainku/assets/dataset
         base_backend_dir / "assets" / "dataset",         # backend/assets/dataset
+        base_backend_dir.parent / "assets" / "dataset",  # app_desainku/assets/dataset
         base_backend_dir / "dataset",                    # backend/dataset
         Path("assets/dataset").resolve(),
         Path("dataset").resolve(),
@@ -31,7 +31,7 @@ def get_dataset_dir() -> Path:
             return candidate.resolve()
 
     # Default fallback
-    return (base_backend_dir.parent / "assets" / "dataset").resolve()
+    return (base_backend_dir / "assets" / "dataset").resolve()
 
 
 DATASET_DIR = get_dataset_dir()
@@ -52,6 +52,7 @@ def validate_safe_path(target_path: Path) -> Path:
     """
     Prevents path traversal attacks by ensuring the target path is strictly within
     the dataset root directory and points to an existing file.
+    Includes case-insensitive search fallback for Linux deployments (Hugging Face Spaces).
     """
     dataset_resolved = DATASET_DIR.resolve()
     target_resolved = target_path.resolve()
@@ -65,6 +66,14 @@ def validate_safe_path(target_path: Path) -> Path:
         )
 
     if not target_resolved.exists() or not target_resolved.is_file():
+        # Fallback: Case-insensitive search on Linux filesystems
+        parent_dir = target_resolved.parent
+        if parent_dir.exists() and parent_dir.is_dir():
+            target_name_lower = target_resolved.name.lower()
+            for item in parent_dir.iterdir():
+                if item.is_file() and item.name.lower() == target_name_lower:
+                    return item.resolve()
+
         raise HTTPException(
             status_code=404,
             detail=f"File not found in dataset: {target_path.name}"

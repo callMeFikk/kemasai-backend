@@ -2,6 +2,7 @@ from typing import Literal
 from pathlib import Path
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import FileResponse
+from urllib.parse import unquote
 from app.services.dataset_repository import (
     scan_motifs,
     scan_categories,
@@ -57,8 +58,8 @@ def serve_dataset_image(path: str):
 
     Security: validates path is within dataset directory (no path traversal).
     """
-    # Decode URL-encoded path (e.g. spaces)
-    decoded_path = path.replace("%20", " ").replace("+", " ")
+    # Decode URL-encoded path (e.g. spaces, special chars)
+    decoded_path = unquote(path).replace("+", " ")
     target = DATASET_DIR / decoded_path
 
     try:
