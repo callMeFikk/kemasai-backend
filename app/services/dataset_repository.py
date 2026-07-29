@@ -11,6 +11,7 @@ def get_dataset_dir() -> Path:
     """
     Locates the dataset directory on the filesystem.
     Supports environment variable DATASET_DIR, or falls back to common candidate locations.
+    Supports HuggingFace Spaces (working dir /home/user/app/) and local dev environments.
     """
     env_path = os.getenv("DATASET_DIR")
     if env_path:
@@ -19,10 +20,18 @@ def get_dataset_dir() -> Path:
             return p
 
     base_backend_dir = Path(__file__).resolve().parent.parent.parent  # backend/
+    cwd = Path.cwd()
+
     candidates = [
-        base_backend_dir / "assets" / "dataset",         # backend/assets/dataset
-        base_backend_dir.parent / "assets" / "dataset",  # app_desainku/assets/dataset
-        base_backend_dir / "dataset",                    # backend/dataset
+        base_backend_dir / "assets" / "dataset",              # backend/assets/dataset (lokal)
+        base_backend_dir.parent / "assets" / "dataset",       # app_desainku/assets/dataset (lokal)
+        base_backend_dir / "dataset",                         # backend/dataset
+        # HuggingFace Space: app.py di /home/user/app/, file ini di /home/user/app/app/services/
+        Path(__file__).resolve().parent.parent.parent / "assets" / "dataset",
+        Path("/home/user/app/assets/dataset"),                 # HuggingFace Spaces (Python SDK)
+        Path("/home/user/app/app/assets/dataset"),             # HuggingFace alt structure
+        cwd / "assets" / "dataset",                           # Relative to CWD
+        cwd / "dataset",                                      # Relative to CWD
         Path("assets/dataset").resolve(),
         Path("dataset").resolve(),
     ]
@@ -30,8 +39,9 @@ def get_dataset_dir() -> Path:
         if candidate.exists() and candidate.is_dir():
             return candidate.resolve()
 
-    # Default fallback
-    return (base_backend_dir / "assets" / "dataset").resolve()
+    # Default fallback — log warning
+    fallback = (base_backend_dir / "assets" / "dataset").resolve()
+    return fallback
 
 
 DATASET_DIR = get_dataset_dir()
@@ -52,7 +62,6 @@ def validate_safe_path(target_path: Path) -> Path:
     """
     Prevents path traversal attacks by ensuring the target path is strictly within
     the dataset root directory and points to an existing file.
-    Includes case-insensitive search fallback for Linux deployments (Hugging Face Spaces).
     """
     dataset_resolved = DATASET_DIR.resolve()
     target_resolved = target_path.resolve()
@@ -66,14 +75,6 @@ def validate_safe_path(target_path: Path) -> Path:
         )
 
     if not target_resolved.exists() or not target_resolved.is_file():
-        # Fallback: Case-insensitive search on Linux filesystems
-        parent_dir = target_resolved.parent
-        if parent_dir.exists() and parent_dir.is_dir():
-            target_name_lower = target_resolved.name.lower()
-            for item in parent_dir.iterdir():
-                if item.is_file() and item.name.lower() == target_name_lower:
-                    return item.resolve()
-
         raise HTTPException(
             status_code=404,
             detail=f"File not found in dataset: {target_path.name}"

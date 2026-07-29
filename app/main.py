@@ -393,3 +393,44 @@ def health_check():
         "version": "3.0.0",
         "stability_api": "✅ Configured" if has_key else "❌ Missing STABILITY_API_KEY",
     }
+
+
+@app.get("/debug/paths")
+def debug_paths():
+    """
+    Debug endpoint: shows resolved DATASET_DIR, CWD, and lists top-level dataset folders.
+    Useful for diagnosing image-not-found issues on HuggingFace Spaces.
+    """
+    import os
+    from app.services.dataset_repository import DATASET_DIR
+    from pathlib import Path
+
+    cwd = str(Path.cwd())
+    dataset_exists = DATASET_DIR.exists()
+    dataset_is_dir = DATASET_DIR.is_dir() if dataset_exists else False
+
+    subfolders = []
+    if dataset_is_dir:
+        try:
+            subfolders = sorted([d.name for d in DATASET_DIR.iterdir() if d.is_dir()])
+        except Exception as e:
+            subfolders = [f"ERROR listing: {e}"]
+
+    # Count images per subfolder
+    counts = {}
+    for folder in subfolders:
+        try:
+            fp = DATASET_DIR / folder
+            counts[folder] = sum(1 for f in fp.rglob("*") if f.is_file())
+        except Exception:
+            counts[folder] = -1
+
+    return {
+        "cwd": cwd,
+        "dataset_dir": str(DATASET_DIR),
+        "dataset_exists": dataset_exists,
+        "dataset_is_dir": dataset_is_dir,
+        "subfolders": subfolders,
+        "image_counts": counts,
+        "env_DATASET_DIR": os.getenv("DATASET_DIR", "(not set)"),
+    }
