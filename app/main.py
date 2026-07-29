@@ -273,6 +273,92 @@ async def generate_design_form(
     productImagePath: Optional[str] = Form(None),  # path gambar produk dari dataset
     sketch: Optional[UploadFile] = File(None),
 ):
+def build_detailed_analysis(
+    productName: str,
+    prod_label: str,
+    category: str,
+    motif_name: str,
+    material: str,
+    targetMarket: str,
+    is_halal: bool,
+    bpom_reg: str = "",
+) -> dict:
+    """
+    Generates rich, detailed, structured cultural, aesthetic, and regulatory analysis.
+    """
+    m_lower = motif_name.lower()
+
+    if any(k in m_lower for k in ["tedong", "kerbau"]):
+        cultural_meaning = f"Motif '{motif_name}' melambangkan kemakmuran, derajat sosial tinggi, dan keteguhan prinsip dalam kebudayaan Toraja."
+        colors = ["#8B0000", "#D4AF37", "#1A1A1A", "#FAF6F0"]
+    elif any(k in m_lower for k in ["barre allo", "matahari"]):
+        cultural_meaning = f"Motif '{motif_name}' melambangkan sumber kehidupan, kehangatan, keagungan, dan harapan tinggi bagi kemajuan usaha UMKM."
+        colors = ["#D4AF37", "#E67E22", "#2C3E50", "#FFF8DC"]
+    elif any(k in m_lower for k in ["sabbe", "lipa", "tenun"]):
+        cultural_meaning = f"Motif '{motif_name}' terinspirasi dari keindahan tenun sutra Bugis yang melambangkan keanggunan, kehormatan, dan kehalusan budi."
+        colors = ["#4A154B", "#D4AF37", "#8B1E3F", "#F5EBE0"]
+    elif any(k in m_lower for k in ["sekong", "wajik", "bintik"]):
+        cultural_meaning = f"Motif '{motif_name}' melambangkan ikatan kekeluargaan yang erat, persatuan, dan keteraturan ikhtiar."
+        colors = ["#1B263B", "#C85A32", "#E0A96D", "#F4F1DE"]
+    elif any(k in m_lower for k in ["balla", "somba", "gowa", "makassar"]):
+        cultural_meaning = f"Motif '{motif_name}' merepresentasikan kejayaan dan kebanggaan kebudayaan maritim Makassar & Gowa."
+        colors = ["#A31D1D", "#D4AF37", "#0F4C81", "#FAF7F2"]
+    else:
+        cultural_meaning = f"Motif '{motif_name}' menyimbolkan nilai estetika kearifan lokal Sulawesi Selatan yang memberikan identitas etnik kuat pada produk."
+        colors = ["#5D3A1A", "#D4AF37", "#2C3E50", "#FAF6F0"]
+
+    t_lower = targetMarket.lower()
+    if "muda" in t_lower or "gen-z" in t_lower or "millennial" in t_lower:
+        strategy = f"Dikemas modern-minimalis untuk memikat konsumen {targetMarket}. Warna kontras dan motif {motif_name} tampil estetik (instagramable) tanpa mengesampingkan identitas etnik."
+    elif "oleh" in t_lower or "wisata" in t_lower or "turis" in t_lower:
+        strategy = f"Fokus utama sebagai produk oleh-oleh khas Sulsel berkesan premium. Motif {motif_name} ditonjolkan sebagai daya tarik budaya autentik yang berkesan tinggi."
+    elif "ekspor" in t_lower or "global" in t_lower:
+        strategy = f"Standar visual internasional untuk pasar ekspor. Kemasan {material} dengan aksen motif {motif_name} memberikan keunggulan produk etnik nusantara berkualitas tinggi."
+    else:
+        strategy = f"Posisi produk sebagai pilihan utama bagi {targetMarket} melalui perpaduan aksen etnik khas Sulawesi Selatan dan tampilan kemasan {material} yang rapi & profesional."
+
+    compliance_items = []
+    if is_halal:
+        compliance_items.append("Logo Halal Indonesia tercantum jelas di bagian depan kemasan.")
+    if bpom_reg:
+        compliance_items.append(f"Nomor Izin BPOM ({bpom_reg}) wajib dicantumkan pada label informasi.")
+    else:
+        compliance_items.append("Cantumkan izin P-IRT / BPOM pada panel legalitas kemasan.")
+    compliance_items.append("Wajib mencantumkan Nama Produk, Berat Bersih (Netto), Tanggal Kadaluarsa, dan Info Produsen.")
+
+    return {
+        "color_palette": colors,
+        "typography": f"Font judul brand '{productName or prod_label}' menggunakan serif/sans-serif elegan beraksen emas/kontras, sedangkan teks legal menggunakan font bersih sans-serif yang mudah dibaca.",
+        "layout": f"Tata letak simetris fokus tengah: Nama Brand '{productName or prod_label}' sebagai pusat perhatian utama, dipadukan bingkai dekoratif motif {motif_name} di area background label kemasan {material}.",
+        "cultural_tips": cultural_meaning,
+        "market_positioning": strategy,
+        "umkm_compliance": " | ".join(compliance_items),
+        "packaging_advantage": f"Material {material} memberikan perlindungan optimal terhadap kelembapan dan kebersihan, menjaga kualitas khas {prod_label}, serta meningkatkan daya tarik visual produk.",
+    }
+
+
+@app.post("/api/generate-design")
+async def generate_design_complete(
+    productName: str = Form(""),
+    category: str = Form("makanan"),
+    product: str = Form(""),
+    motif: str = Form(""),
+    material: str = Form("Standup Pouch"),
+    targetMarket: str = Form("Semua Usia"),
+    isHalal: str = Form("false"),
+    halalCertNumber: str = Form(""),
+    hasBPOM: str = Form("false"),
+    bpomRegNumber: str = Form(""),
+    nibNumber: str = Form(""),
+    producerInfo: str = Form(""),
+    storageInstructions: str = Form(""),
+    netWeight: str = Form(""),
+    expiryDate: str = Form(""),
+    color: str = Form(""),
+    enrichedPrompt: Optional[str] = Form(None),
+    productImagePath: Optional[str] = Form(None),  # path gambar produk dari dataset
+    sketch: Optional[UploadFile] = File(None),
+):
     """
     Form-data endpoint compatible with ApiService.generateDesignComplete from Flutter.
     
@@ -362,15 +448,16 @@ async def generate_design_form(
         "image_base64": first_image,         # Backward compat
         "image": first_image,                # Backward compat
         "prompt_used": prompt,
-        "analysis": {
-            "color_palette": ["#5D3A1A", "#D4AF37", "#FAF6F0"],
-            "typography": f"Elegant serif font for brand name '{productName or prod_label}' dengan sentuhan kearifan lokal Sulsel",
-            "layout": f"Kemasan {material} dengan motif {motif_name} sebagai elemen dekoratif label utama",
-            "cultural_tips": f"Motif {motif_name} dari Sulawesi Selatan diintegrasikan sebagai pola border dan background label",
-            "market_positioning": f"Desain premium untuk target pasar {targetMarket}",
-            "umkm_compliance": "Pastikan label mencantumkan nama produk, berat bersih, tanggal kedaluwarsa, dan info produsen",
-            "packaging_advantage": f"Material {material} memberikan tampilan premium dan ramah lingkungan",
-        },
+        "analysis": build_detailed_analysis(
+            productName=productName,
+            prod_label=prod_label,
+            category=category,
+            motif_name=motif_name,
+            material=material,
+            targetMarket=targetMarket,
+            is_halal=halal_flag,
+            bpom_reg=bpomRegNumber,
+        ),
         "metadata": {
             "productName": productName,
             "category": category,

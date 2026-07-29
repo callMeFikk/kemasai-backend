@@ -81,7 +81,7 @@ def serve_dataset_image(path: str):
         path=str(safe_path),
         media_type=media_type,
         headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "public, max-age=31536000, immutable",
             "Access-Control-Allow-Origin": "*",
         }
     )
