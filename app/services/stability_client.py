@@ -202,81 +202,92 @@ def resolve_init_image(data: Any) -> tuple[bytes | None, str | None]:
 
 def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
     """
-    Generates 4 high-quality, UNIQUE packaging images using Pollinations AI (FLUX model).
-    100% FREE, NO API KEY REQUIRED, UNLIMITED GENERATIONS.
-    Fetches sequentially with 1.2s delay to avoid HTTP 429 burst rate limit and guarantee 4 unique designs.
+    Generates high-quality images using Pollinations AI (FLUX models) with multi-model fallback,
+    staggered delays, and automatic rate-limit backoff.
     """
+    import base64
     import urllib.parse
     import urllib.request
     import urllib.error
     import random
     import time
-    import base64
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    print(f"[POLLINATIONS AI] Generating {num_samples} UNIQUE images with FLUX model (Free & Unlimited)...")
+    print(f"[POLLINATIONS AI] Generating {num_samples} images with multi-model fallback...")
     clean_prompt = prompt.replace("\n", " ").strip()
+    # Try models in fallback order — flux-schnell matches the reference image quality
+    models = ["flux-schnell", "flux-realism", "flux", "turbo"]
 
-    # Distinct style/angle variations so each of the 4 samples produces a unique design
     style_variations = [
-        ", front view studio product render, minimal modern layout",
-        ", 3/4 perspective angle product photography, vibrant label contrast",
-        ", close-up detail of label texture and branding, elegant gold trim",
-        ", side perspective presentation, premium studio lighting"
+        ", front view centered product photography, clean studio white background, hero product shot",
+        ", 3/4 angle glamour shot, dramatic rim lighting, commercial product photography, white background",
+        ", straight-on label shot, premium studio lighting, isolated white background, sharp focus",
+        ", slight side angle, soft diffused studio lighting, photorealistic render, white background",
     ]
 
-    images = []
-    for idx in range(num_samples):
+    def fetch_single_sample(idx: int) -> tuple[int, str | None]:
+        # Small stagger (0.5s per slot) to avoid simultaneous rate-limiting
+        if idx > 0:
+            time.sleep(idx * 0.5)
+        
         variation = style_variations[idx % len(style_variations)]
         seed = random.randint(100000, 999999)
-        sample_prompt = f"{clean_prompt} {variation}, variation {idx+1}, seed {seed}"
+        sample_prompt = f"{clean_prompt}{variation}"
         encoded = urllib.parse.quote(sample_prompt)
 
-        max_retries = 3
-        b64_res = None
-        for attempt in range(max_retries):
-            url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/{110+idx+attempt}.0.0.0 Safari/537.36"
-                }
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=35) as response:
-                    img_bytes = response.read()
-                    if len(img_bytes) > 2000:
-                        b64_res = base64.b64encode(img_bytes).decode("utf-8")
-                        print(f"[POLLINATIONS] Sample {idx+1}/{num_samples} OK ({len(img_bytes)//1024} KB)")
-                        break
-            except urllib.error.HTTPError as he:
-                if he.code == 429:
-                    wait_time = 1.5 * (attempt + 1) + random.uniform(0.2, 0.5)
-                    print(f"[POLLINATIONS RETRY] Sample {idx+1} hit 429, retrying in {wait_time:.1f}s (attempt {attempt+1}/{max_retries})...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"[POLLINATIONS WARN] Sample {idx+1} HTTP error {he.code}: {he.reason}")
+        for model in models:
+            for attempt in range(2):
+                url = (
+                    f"https://image.pollinations.ai/prompt/{encoded}"
+                    f"?width=1024&height=1024&model={model}&nologo=true&seed={seed}"
+                )
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/{115 + idx}.0.0.0 Safari/537.36"},
+                )
+                try:
+                    # FLUX model can take 25–45 s — the previous 12 s timeout was the root cause.
+                    with urllib.request.urlopen(req, timeout=55) as response:
+                        img_bytes = response.read()
+                        if len(img_bytes) > 2000:
+                            b64 = base64.b64encode(img_bytes).decode("utf-8")
+                            print(
+                                f"[POLLINATIONS] Sample {idx+1}/{num_samples} OK "
+                                f"({len(img_bytes) // 1024} KB) model={model}"
+                            )
+                            return idx, b64
+                except urllib.error.HTTPError as he:
+                    print(f"[POLLINATIONS] Sample {idx+1} HTTP {he.code} model={model} attempt={attempt+1}")
+                    if he.code == 429:
+                        time.sleep(5 * (attempt + 1))  # backoff on rate limit
+                        continue  # retry same model
+                    break  # other HTTP error → try next model
+                except Exception as e:
+                    print(f"[POLLINATIONS WARN] Sample {idx+1} model={model} attempt={attempt+1}: {e}")
+                    # On timeout/connection error, try next model (don't give up entirely)
                     break
-            except Exception as e:
-                print(f"[POLLINATIONS WARN] Sample {idx+1} error: {e}")
-                time.sleep(0.8)
+        return idx, None
 
-        if b64_res:
-            images.append(b64_res)
+    results = []
+    with ThreadPoolExecutor(max_workers=min(num_samples, 4)) as executor:
+        futures = [executor.submit(fetch_single_sample, i) for i in range(num_samples)]
+        for future in as_completed(futures):
+            results.append(future.result())
 
-        # 1.2s delay between sequential calls to guarantee no 429 rate limit
-        if idx < num_samples - 1:
-            time.sleep(1.2)
+    results.sort(key=lambda r: r[0])
+    successful_images = [b64 for _, b64 in results if b64 is not None]
 
-    if images:
-        orig_count = len(images)
-        while len(images) < 4:
-            images.append(images[len(images) % orig_count])
-        return images
+    if successful_images:
+        images_out = list(successful_images)
+        while len(images_out) < num_samples:
+            images_out.append(images_out[len(images_out) % len(successful_images)])
+        return images_out
 
     raise HTTPException(
         status_code=502,
         detail="Gagal generate desain dari engine AI gratis. Silakan coba lagi."
     )
+
 
 
 def generate_stability_image(

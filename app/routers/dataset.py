@@ -1,9 +1,14 @@
 from typing import Literal
+from pathlib import Path
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import FileResponse
 from app.services.dataset_repository import (
     scan_motifs,
     scan_categories,
     scan_materials,
+    DATASET_DIR,
+    validate_safe_path,
+    IMAGE_EXTENSIONS,
 )
 
 router = APIRouter(tags=["dataset"])
@@ -41,3 +46,41 @@ def get_materials():
     Returns packaging material reference items scanned from dataset/Material_Kemasan.
     """
     return scan_materials()
+
+
+@router.get("/dataset/image/{path:path}")
+def serve_dataset_image(path: str):
+    """
+    Serves a dataset image file to Flutter frontend.
+    Path is relative to the dataset root, e.g. 'Makanan_UMKM/Buras.jpeg'
+    or 'Minuman_UMKM/Kopi Toraja.jpg' or 'Motif_Bugis/Lipa Sabbe.jpg'.
+
+    Security: validates path is within dataset directory (no path traversal).
+    """
+    # Decode URL-encoded path (e.g. spaces)
+    decoded_path = path.replace("%20", " ").replace("+", " ")
+    target = DATASET_DIR / decoded_path
+
+    try:
+        safe_path = validate_safe_path(target)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail=f"Dataset image not found: {decoded_path}")
+
+    # Determine media type from extension
+    ext = safe_path.suffix.lower()
+    media_type_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    media_type = media_type_map.get(ext, "image/jpeg")
+
+    return FileResponse(
+        path=str(safe_path),
+        media_type=media_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Access-Control-Allow-Origin": "*",
+        }
+    )

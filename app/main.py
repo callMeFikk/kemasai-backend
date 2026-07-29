@@ -86,30 +86,30 @@ def _get_packaging_type(category_type: str, material: str) -> tuple[str, str]:
     cat = category_type.lower()
     mat = material.lower()
 
-    if "minuman" in cat or "botol" in mat or "kaca" in mat or "drink" in cat or "beverage" in cat:
+    if "botol" in mat or "kaca" in mat or "minuman" in cat or "drink" in cat or "beverage" in cat:
         return (
-            "commercial beverage bottle with printed label",
-            "upright cylindrical glass or plastic bottle, product label with design, studio lighting"
+            "hyperrealistic 3D commercial glass jar container mockup with shiny metallic gold screw lid",
+            "transparent glass jar with realistic reflections showing fresh food product contents inside, wrapped front label sticker"
         )
     elif "pouch" in mat or "plastik" in mat:
         return (
-            "commercial stand-up zip pouch food packaging",
-            "sealed matte finish zip-lock pouch bag, front label panel, professional food packaging"
+            "hyperrealistic 3D commercial stand-up zip pouch food packaging bag",
+            "sealed matte finish zip-lock pouch bag with transparent viewing window and crisp front label printing"
         )
     elif "lontar" in mat or "pisang" in mat or "pelepah" in mat or "anyaman" in mat:
         return (
-            "traditional handcraft eco packaging container",
-            f"artisan woven {material} container with cloth label tag, natural organic packaging style"
+            "hyperrealistic 3D artisan handwoven eco packaging container",
+            f"artisan woven {material} container with woven lid and custom printed label tag sleeve"
         )
     elif "tenun" in mat or "kain" in mat:
         return (
-            "premium fabric-wrapped gift packaging box",
-            f"elegant {material} wrapped box with decorative label and ribbon accent"
+            "hyperrealistic 3D fabric-wrapped gift packaging box",
+            f"elegant {material} wrapped gift box with printed ethnic label sleeve"
         )
     else:
         return (
-            "commercial cardboard packaging box with label",
-            f"rectangular {material} box, front label panel clearly visible, clean white background"
+            "hyperrealistic 3D kraft paper cardboard food packaging box",
+            f"rectangular {material} food box with printed front label panel, crisp edges, studio lighting"
         )
 
 
@@ -128,8 +128,7 @@ def build_prompt(
     target_market: str = "Lokal",
 ) -> str:
     """
-    Build a detailed, packaging-focused prompt for Stability AI.
-    Generates a PACKAGING DESIGN (box/bottle/label), NOT an image of the food.
+    Build a detailed 3D packaging product mockup prompt for FLUX and Stability AI.
     """
     display_name = brand_name or product_name or category_label
     pack_type, pack_shape = _get_packaging_type(category_type, material)
@@ -142,27 +141,27 @@ def build_prompt(
     # Certification badges
     badges = ""
     if is_halal:
-        badges += "Halal certification logo badge visible on label. "
+        badges += "Halal certified logo badge visible on label. "
 
     # Market style
     market_style = (
-        "premium modern retail style, clean minimal layout"
+        "sleek modern commercial retail product packaging, clean minimal layout"
         if target_market.lower() in ("nasional", "national")
-        else "authentic artisan local market style, warm earthy tones"
+        else "authentic artisan local market product packaging, warm earthy tones"
     )
 
     prompt = (
-        f"Professional {pack_type} design. "
+        f"Award-winning 3D commercial product packaging mockup of {pack_type}. "
         f"PACKAGING SHAPE: {pack_shape}. "
-        f"LABEL TEXT: Bold brand name '{display_name}' prominently displayed in elegant serif typography on the packaging label. "
-        f"CULTURAL PATTERN: The label and packaging surface is decorated with {motif_name} traditional woven motif from {kabupaten}, {region}, South Sulawesi — "
-        f"geometric ethnic ornamental pattern integrated beautifully into the label design. "
-        f"MATERIAL: {material} texture and finish. "
+        f"PHYSICAL FRONT LABEL: A crisp, solid white rectangular label sticker physically attached directly onto the front surface of the packaging. "
+        f"PRODUCT TITLE ON PACKAGING: Large, ultra-sharp, bold dark typography titled '{display_name.upper()}' printed prominently in the center of the front packaging label sticker. High contrast, maximum legibility, perfectly readable text physically on the packaging. "
+        f"CULTURAL PATTERN: The outer background of the packaging is decorated with authentic {motif_name} traditional ethnic motif from {kabupaten}, {region}, South Sulawesi — "
+        f"intricate geometric ornamental batik pattern framing the central white label cleanly. "
+        f"MATERIAL: {material} material texture and finish. "
         f"{color_guide}"
         f"{badges}"
-        f"STYLE: {market_style}, 3D product render, studio product photography, "
-        f"clean white or neutral background, sharp focus, photorealistic, 8K resolution, "
-        f"no text errors, professional commercial packaging ready-to-print design. "
+        f"STYLE: {market_style}, photorealistic 3D render, studio product photography, "
+        f"isolated clean white studio background with soft drop shadow, glass reflections, sharp focus, 8K resolution, octane render quality. "
         f"CONTEXT: {description}"
     )
     return prompt.strip()
@@ -271,6 +270,7 @@ async def generate_design_form(
     expiryDate: str = Form(""),
     color: str = Form(""),
     enrichedPrompt: Optional[str] = Form(None),
+    productImagePath: Optional[str] = Form(None),  # path gambar produk dari dataset
     sketch: Optional[UploadFile] = File(None),
 ):
     """
@@ -328,9 +328,31 @@ async def generate_design_form(
     print(f"[GENERATE] Product: {productName} | Motif: {motif_name} | Material: {material}")
     print(f"[GENERATE] Prompt preview: {prompt[:200]}...")
 
-    # Generate 4 alternative designs — TEXT-TO-IMAGE only (no init_image)
-    # This ensures the AI generates a proper packaging design, not a sketch reproduction
-    generated_images = generate_stability_image(prompt, init_image_bytes=None, num_samples=4)
+    # Resolve init_image from dataset product image if provided
+    # This enables image-to-image mode for higher visual relevance to the actual product
+    init_image_bytes: Optional[bytes] = None
+    if productImagePath and productImagePath.strip():
+        from app.services.dataset_repository import DATASET_DIR, validate_safe_path
+        from fastapi import HTTPException as HEx
+        try:
+            decoded = productImagePath.strip().replace("%20", " ")
+            target = DATASET_DIR / decoded
+            safe_path = validate_safe_path(target)
+            with open(safe_path, "rb") as f:
+                init_image_bytes = f.read()
+            print(f"[GENERATE] Using dataset product image as init_image: {decoded} ({len(init_image_bytes)} bytes)")
+        except Exception as e:
+            print(f"[GENERATE] Warning: Could not load product image '{productImagePath}': {e}")
+            init_image_bytes = None
+
+    # Generate 4 alternative designs
+    # If init_image_bytes is set: image-to-image (higher product relevance)
+    # If None: text-to-image (standard mode)
+    generated_images = generate_stability_image(
+        prompt,
+        init_image_bytes=init_image_bytes,
+        num_samples=4,
+    )
 
     first_image = generated_images[0] if generated_images else None
 

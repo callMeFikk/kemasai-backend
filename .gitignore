@@ -17,3 +17,11 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+tests/
+test_result.json
