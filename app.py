@@ -1,16 +1,14 @@
 import sys
 import os
-import uvicorn
 
 # Pastikan folder root backend terdaftar di Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import FastAPI app dari app/main.py
-from app.main import app
+# HuggingFace Space akan menjalankan: uvicorn app:app --host 0.0.0.0 --port 7860
+from app.main import app  # noqa: F401 — diekspos untuk uvicorn
 
-# Expose app for ASGI servers (uvicorn, gunicorn, etc.)
-__all__ = ["app"]
-
+# Hanya jalankan uvicorn jika dijalankan langsung (lokal dev)
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=7860, reload=True)
-
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
