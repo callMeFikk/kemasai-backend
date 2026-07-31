@@ -254,28 +254,6 @@ def generate_design(data: DesignRequest):
     return response_payload
 
 
-@app.post("/api/generate-design")
-async def generate_design_form(
-    productName: str = Form(""),
-    category: str = Form("Makanan"),
-    product: str = Form(""),
-    motif: str = Form(""),
-    material: str = Form("Kertas Kraft"),
-    targetMarket: str = Form("Lokal"),
-    isHalal: str = Form("true"),
-    halalCertNumber: str = Form(""),
-    hasBPOM: str = Form("true"),
-    bpomRegNumber: str = Form(""),
-    nibNumber: str = Form(""),
-    producerInfo: str = Form(""),
-    storageInstructions: str = Form(""),
-    netWeight: str = Form(""),
-    expiryDate: str = Form(""),
-    color: str = Form(""),
-    enrichedPrompt: Optional[str] = Form(None),
-    productImagePath: Optional[str] = Form(None),  # path gambar produk dari dataset
-    sketch: Optional[UploadFile] = File(None),
-):
 def build_detailed_analysis(
     productName: str,
     prod_label: str,
