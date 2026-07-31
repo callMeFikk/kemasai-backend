@@ -137,7 +137,7 @@ def build_prompt(
     color_guide = ""
     if color_hint:
         color_guide = f"Color palette: {color_hint}. "
-    
+
     # Certification badges
     badges = ""
     if is_halal:
@@ -145,9 +145,9 @@ def build_prompt(
 
     # Market style
     market_style = (
-        "sleek modern commercial retail product packaging, clean minimal layout"
+        "clean modern minimal commercial retail packaging, high-contrast premium shelf appeal"
         if target_market.lower() in ("nasional", "national")
-        else "authentic artisan local market product packaging, warm earthy tones"
+        else "authentic premium artisan local UMKM packaging, warm cultural heritage aesthetic, earthy tones"
     )
 
     prompt = (
@@ -156,15 +156,18 @@ def build_prompt(
         f"PHYSICAL FRONT LABEL: A crisp, solid white rectangular label sticker physically attached directly onto the front surface of the packaging. "
         f"PRODUCT TITLE ON PACKAGING: Large, ultra-sharp, bold dark typography titled '{display_name.upper()}' printed prominently in the center of the front packaging label sticker. High contrast, maximum legibility, perfectly readable text physically on the packaging. "
         f"CULTURAL PATTERN: The outer background of the packaging is decorated with authentic {motif_name} traditional ethnic motif from {kabupaten}, {region}, South Sulawesi — "
-        f"intricate geometric ornamental batik pattern framing the central white label cleanly. "
+        f"seamlessly TILING, REPEATING geometric ornamental batik pattern at identical scale across ALL panels, framing the central white label cleanly. "
+        f"MOTIF RULES: The pattern MUST tile perfectly at all fold edges — no shifting, no drift, no broken fragments. "
         f"MATERIAL: {material} material texture and finish. "
         f"{color_guide}"
         f"{badges}"
         f"STYLE: {market_style}, photorealistic 3D render, studio product photography, "
-        f"isolated clean white studio background with soft drop shadow, glass reflections, sharp focus, 8K resolution, octane render quality. "
+        f"isolated clean white studio background with soft drop shadow, sharp focus, 8K resolution, octane render quality. "
+        f"STRICT: No food illustrations, no ingredient icons, no random floating elements. "
         f"CONTEXT: {description}"
     )
     return prompt.strip()
+
 
 
 @app.get("/")
@@ -376,18 +379,17 @@ async def generate_design_complete(
     halal_flag = isHalal.lower() in ("true", "1", "yes")
 
     if enrichedPrompt and enrichedPrompt.strip():
-        # Use the enriched prompt from Flutter's PromptEngineeringService
-        # But enhance it with explicit packaging instruction prefix
+        # FIX E: Kirim FULL enrichedPrompt dari Flutter tanpa truncation.
+        # Backend HANYA menambahkan prefix teknis ringan dan suffix — tidak memotong
+        # atau menimpa konten kaya (motif, warna, identitas dataset) dari PromptEngineeringService.
         base = enrichedPrompt.strip()
         prompt = (
-            f"Professional commercial product PACKAGING DESIGN — "
-            f"packaging box or container with label for '{prod_label}'. "
-            f"DO NOT show the food product itself, show the PACKAGING design. "
-            f"Label text: brand name '{productName or prod_label}' prominently displayed. "
-            f"Cultural motif: {motif_name} traditional South Sulawesi pattern on label. "
+            f"Commercial PACKAGING DESIGN MOCKUP — professional print-ready product packaging "
+            f"for '{productName or prod_label}' ({category}). "
             f"Material: {material}. "
-            f"3D render, studio photography, white background, photorealistic, sharp focus, 8K. "
-            f"Details: {base[:500]}"
+            f"Show ONLY the packaging container/box, NOT the food product itself. "
+            f"3D render, studio photography, clean white background, photorealistic, sharp focus, 8K. "
+            f"\n\n{base}"
         )
     else:
         description = f"South Sulawesi {category.lower()} product '{prod_label}', target market: {targetMarket}."

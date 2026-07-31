@@ -198,6 +198,31 @@ def resolve_init_image(data: Any) -> tuple[bytes | None, str | None]:
     return None, None
 
 
+# ─── Simple In-Memory Prompt Cache (TTL = 10 Minutes) ────────────────────────
+import time as _time
+
+_PROMPT_CACHE: dict[str, tuple[float, list[str]]] = {}
+CACHE_TTL_SECONDS: int = 600  # 10 minutes cache TTL
+
+def get_cached_images(prompt_key: str) -> list[str] | None:
+    now = _time.time()
+    if prompt_key in _PROMPT_CACHE:
+        timestamp, images = _PROMPT_CACHE[prompt_key]
+        if now - timestamp < CACHE_TTL_SECONDS:
+            print(f"[CACHE HIT] Returning cached images for prompt (age: {int(now - timestamp)}s)...")
+            return images
+        else:
+            del _PROMPT_CACHE[prompt_key]
+    return None
+
+def set_cached_images(prompt_key: str, images: list[str]):
+    # Keep cache size bounded to max 30 items
+    if len(_PROMPT_CACHE) > 30:
+        oldest_key = min(_PROMPT_CACHE, key=lambda k: _PROMPT_CACHE[k][0])
+        del _PROMPT_CACHE[oldest_key]
+    _PROMPT_CACHE[prompt_key] = (_time.time(), images)
+
+
 # ─── Free Generator API Call (Pollinations AI - FLUX Model) ───────────────────
 
 def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
@@ -215,28 +240,41 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
 
     print(f"[POLLINATIONS AI] Generating {num_samples} images with multi-model fallback...")
     clean_prompt = prompt.replace("\n", " ").strip()
-    # Try models in fallback order — flux-schnell matches the reference image quality
-    models = ["flux-schnell", "flux-realism", "flux", "turbo"]
+    # Try fast models in fallback order (flux-schnell is primary: fastest & high quality)
+    models = ["flux-schnell", "turbo"]
 
+    # Packaging-aware style variations — setiap variasi menjaga konsistensi dieline
+    # dan tidak mengubah angle secara drastis yang bisa memecah konsistensi motif antar panel.
     style_variations = [
-        ", front view centered product photography, clean studio white background, hero product shot",
-        ", 3/4 angle glamour shot, dramatic rim lighting, commercial product photography, white background",
-        ", straight-on label shot, premium studio lighting, isolated white background, sharp focus",
-        ", slight side angle, soft diffused studio lighting, photorealistic render, white background",
+        ", front face view, centered label legible, seamless tiling motif pattern on all panels, clean studio white background, print-ready packaging mockup",
+        ", slight 3/4 left angle showing front and left side panel, motif pattern continuous across both panels, commercial product photography, white background",
+        ", straight-on front view, ultra-sharp product name text, consistent repeating motif background, isolated white background, professional studio lighting",
+        ", 3/4 right angle showing front and right side panel, motif seamlessly wrapping corners, photorealistic render, white background",
     ]
 
+    # Global negative prompt: larangan keras terhadap elemen visual asing
+    global_negative = (
+        " -- negative: food illustrations, ingredient icons, floating fruit, vegetable drawings, "
+        "random decorative objects, misaligned motif, broken pattern, blurry text, illegible label, "
+        "asymmetric pattern, watermark, logo unrelated to product, cluttered background, "
+        "distorted packaging shape, elements outside print boundaries"
+    )
+
     def fetch_single_sample(idx: int) -> tuple[int, str | None]:
-        # Small stagger (0.5s per slot) to avoid simultaneous rate-limiting
+        # Small stagger (0.4s per slot) to avoid simultaneous rate-limiting
         if idx > 0:
-            time.sleep(idx * 0.5)
+            time.sleep(idx * 0.4)
         
         variation = style_variations[idx % len(style_variations)]
         seed = random.randint(100000, 999999)
-        sample_prompt = f"{clean_prompt}{variation}"
+        sample_prompt = f"{clean_prompt}{variation}{global_negative}"
         encoded = urllib.parse.quote(sample_prompt)
 
-        for model in models:
-            for attempt in range(2):
+        for model_idx, model in enumerate(models):
+            if model_idx > 0:
+                time.sleep(0.4)  # 400ms delay between fallback model attempts to prevent rate limit (429)
+
+            for attempt in range(1):
                 url = (
                     f"https://image.pollinations.ai/prompt/{encoded}"
                     f"?width=1024&height=1024&model={model}&nologo=true&seed={seed}"
@@ -246,8 +284,8 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
                     headers={"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/{115 + idx}.0.0.0 Safari/537.36"},
                 )
                 try:
-                    # FLUX model can take 25–45 s — the previous 12 s timeout was the root cause.
-                    with urllib.request.urlopen(req, timeout=55) as response:
+                    # Optimized timeout: 20 seconds per attempt (turun dari 25s)
+                    with urllib.request.urlopen(req, timeout=20) as response:
                         img_bytes = response.read()
                         if len(img_bytes) > 2000:
                             b64 = base64.b64encode(img_bytes).decode("utf-8")
@@ -259,7 +297,7 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
                 except urllib.error.HTTPError as he:
                     print(f"[POLLINATIONS] Sample {idx+1} HTTP {he.code} model={model} attempt={attempt+1}")
                     if he.code == 429:
-                        time.sleep(5 * (attempt + 1))  # backoff on rate limit
+                        time.sleep(3)  # backoff on rate limit
                         continue  # retry same model
                     break  # other HTTP error → try next model
                 except Exception as e:
@@ -269,7 +307,8 @@ def generate_pollinations_image(prompt: str, num_samples: int = 4) -> list[str]:
         return idx, None
 
     results = []
-    with ThreadPoolExecutor(max_workers=min(num_samples, 4)) as executor:
+    # Limit max_workers to 2 to avoid overloading CPU/RAM on HF Space free container
+    with ThreadPoolExecutor(max_workers=min(num_samples, 2)) as executor:
         futures = [executor.submit(fetch_single_sample, i) for i in range(num_samples)]
         for future in as_completed(futures):
             results.append(future.result())
@@ -302,15 +341,25 @@ def generate_stability_image(
     If Stability AI hits Rate Limit (429), Insufficient Credits (402), or Missing Key,
     it seamlessly falls back to Pollinations AI without throwing errors.
     """
+    # Check in-memory cache first (for identical prompts within TTL)
+    cache_key = f"{prompt}_{num_samples}"
+    cached = get_cached_images(cache_key)
+    if cached:
+        return cached
+
     # Option to force free generator via env flag if desired
     if os.getenv("USE_FREE_GENERATOR", "").lower() in ("true", "1", "yes"):
         print("[ENGINE] USE_FREE_GENERATOR active. Using Pollinations AI (FLUX Free)...")
-        return generate_pollinations_image(prompt, num_samples)
+        res = generate_pollinations_image(prompt, num_samples)
+        set_cached_images(cache_key, res)
+        return res
 
     api_key = get_stability_api_key()
     if not api_key:
         print("[FALLBACK] STABILITY_API_KEY missing. Falling back to Pollinations AI (FLUX Free)...")
-        return generate_pollinations_image(prompt, num_samples)
+        res = generate_pollinations_image(prompt, num_samples)
+        set_cached_images(cache_key, res)
+        return res
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -328,7 +377,7 @@ def generate_stability_image(
     )
 
     for samples in samples_to_try:
-        for attempt in range(2):
+        for attempt in range(1):  # Maksimal 1 kali percobaan per jumlah sampel (Fix #3)
             try:
                 if init_image_bytes:
                     init_image_resized = resize_to_allowed_dimension(init_image_bytes)
@@ -382,6 +431,7 @@ def generate_stability_image(
                         base64_list = [art["base64"] for art in artifacts]
                         while len(base64_list) < 4:
                             base64_list.append(base64_list[len(base64_list) % len(artifacts)])
+                        set_cached_images(cache_key, base64_list)
                         return base64_list
 
                 last_error_status = response.status_code
@@ -396,7 +446,9 @@ def generate_stability_image(
 
                 if response.status_code in (429, 401, 402):
                     print(f"[FALLBACK INSTANT] Stability AI returned {response.status_code}. Switching directly to Pollinations AI (FLUX Free)...")
-                    return generate_pollinations_image(prompt, num_samples)
+                    poll_res = generate_pollinations_image(prompt, num_samples)
+                    set_cached_images(cache_key, poll_res)
+                    return poll_res
 
             except requests.exceptions.Timeout:
                 last_error_status = 504
@@ -408,7 +460,9 @@ def generate_stability_image(
     # ── AUTOMATIC FALLBACK TO POLLINATIONS AI (FLUX FREE UNLIMITED) ──────────
     print(f"[FALLBACK] Stability AI error ({last_error_status}: {last_error_msg[:100]}). Falling back to Pollinations AI (FLUX Free)...")
     try:
-        return generate_pollinations_image(prompt, num_samples)
+        final_res = generate_pollinations_image(prompt, num_samples)
+        set_cached_images(cache_key, final_res)
+        return final_res
     except Exception as fallback_err:
         raise HTTPException(
             status_code=502,
