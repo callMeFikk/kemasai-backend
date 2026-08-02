@@ -81,36 +81,115 @@ class DesignRequest(BaseModel):
 
 def _get_packaging_type(category_type: str, material: str) -> tuple[str, str]:
     """
-    Returns (packaging_type_desc, packaging_shape) based on category and material.
+    Returns (packaging_type_desc, packaging_shape) based on material (priority) then category.
+
+    PRIORITY: Material keyword is checked FIRST. The `category_type` (e.g. "minuman")
+    is only used as a fallback WITHIN the glass/bottle branch — and only when the
+    material itself does not match any other known keyword. This prevents the old
+    bug where every "minuman" category request became a glass jar regardless of
+    the user-chosen material (e.g. Standup Pouch).
+
+    KEYWORD SYNC: Keywords here are kept in sync with Flutter's
+    PromptEngineeringService.generateEnrichedPrompt() — both sides must recognize
+    the same set of terms so packaging shape is consistent whether enrichedPrompt
+    is used or the backend falls back to build_prompt().
+
+    UNKNOWN MATERIALS: If the material doesn't match any known keyword, we do NOT
+    silently fall back to a kraft cardboard box. Instead we return a generic
+    descriptor that still names the actual material, so the prompt never
+    contradicts what the user requested.
     """
     cat = category_type.lower()
     mat = material.lower()
 
-    if "botol" in mat or "kaca" in mat or "minuman" in cat or "drink" in cat or "beverage" in cat:
-        return (
-            "hyperrealistic 3D commercial glass jar container mockup with shiny metallic gold screw lid",
-            "transparent glass jar with realistic reflections showing fresh food product contents inside, wrapped front label sticker"
-        )
-    elif "pouch" in mat or "plastik" in mat:
-        return (
+    def _matched(category_name: str, pack_type: str, pack_shape: str) -> tuple[str, str]:
+        print(f"[MATERIAL] '{material}' → packaging_category='{category_name}'")
+        return pack_type, pack_shape
+
+    # ── 1. Stand-up pouch / plastik / sachet ─────────────────────────────────
+    # Checked BEFORE glass/bottle so a Standup Pouch minuman stays a pouch.
+    if ("pouch" in mat or "plastik" in mat or "zip" in mat
+            or "standup" in mat or "standing" in mat or "sachet" in mat):
+        return _matched(
+            "standup_pouch",
             "hyperrealistic 3D commercial stand-up zip pouch food packaging bag",
-            "sealed matte finish zip-lock pouch bag with transparent viewing window and crisp front label printing"
+            f"sealed matte finish zip-lock {material} pouch bag with transparent viewing window "
+            f"and crisp front label printing"
         )
-    elif "lontar" in mat or "pisang" in mat or "pelepah" in mat or "anyaman" in mat:
-        return (
+
+    # ── 2. Woven / natural fiber (lontar, bambu, rotan, anyaman, pelepah) ─────
+    if ("lontar" in mat or "pisang" in mat or "pelepah" in mat
+            or "anyaman" in mat or "bambu" in mat or "rotan" in mat
+            or "woven" in mat):
+        return _matched(
+            "woven_natural_fiber",
             "hyperrealistic 3D artisan handwoven eco packaging container",
             f"artisan woven {material} container with woven lid and custom printed label tag sleeve"
         )
-    elif "tenun" in mat or "kain" in mat:
-        return (
+
+    # ── 3. Fabric / kain / tenun ──────────────────────────────────────────────
+    if ("tenun" in mat or "kain" in mat or "fabric" in mat or "cloth" in mat):
+        return _matched(
+            "fabric_wrapped",
             "hyperrealistic 3D fabric-wrapped gift packaging box",
             f"elegant {material} wrapped gift box with printed ethnic label sleeve"
         )
-    else:
-        return (
+
+    # ── 4. Ceramic / keramik / gerabah / porcelain ───────────────────────────
+    if ("keramik" in mat or "ceramic" in mat
+            or "porcelain" in mat or "gerabah" in mat):
+        return _matched(
+            "ceramic_jar",
+            "hyperrealistic 3D ceramic jar container mockup with fitted lid",
+            f"glazed ceramic {material} jar with fitted lid and printed front label sticker"
+        )
+
+    # ── 5. Metal / tin / aluminium / kaleng / foil ───────────────────────────
+    if ("aluminium" in mat or "alumunium" in mat or "foil" in mat
+            or "kaleng" in mat or "tin" in mat or "metal" in mat):
+        return _matched(
+            "metal_tin_can",
+            "hyperrealistic 3D metal tin/aluminium can packaging mockup",
+            f"metallic {material} tin can with printed wraparound label and crisp edges"
+        )
+
+    # ── 6. Paper / cardboard / kraft / karton ────────────────────────────────
+    if ("kertas" in mat or "kraft" in mat or "karton" in mat
+            or "kardus" in mat or "cardboard" in mat or "paper" in mat
+            or "box" in mat or "kotak" in mat):
+        return _matched(
+            "cardboard_box",
             "hyperrealistic 3D kraft paper cardboard food packaging box",
             f"rectangular {material} food box with printed front label panel, crisp edges, studio lighting"
         )
+
+    # ── 7. Glass / botol / kaca / jar ────────────────────────────────────────
+    # This branch also activates as a FALLBACK when the category is "minuman"
+    # and no other material keyword matched above. That way a user who picks
+    # "Standup Pouch" for a minuman product stays a pouch (caught in branch 1),
+    # but an unrecognized/generic minuman material still sensibly defaults to
+    # a glass bottle rather than cardboard.
+    if ("botol" in mat or "kaca" in mat or "glass" in mat or "jar" in mat
+            or "minuman" in cat or "drink" in cat or "beverage" in cat):
+        return _matched(
+            "glass_jar_bottle",
+            "hyperrealistic 3D commercial glass jar container mockup with shiny metallic gold screw lid",
+            "transparent glass jar with realistic reflections, wrapped front label sticker"
+        )
+
+    # ── 8. Unknown material — preserve name, log warning ─────────────────────
+    print(
+        f"[WARN] Material '{material}' (category='{category_type}') did not match any known "
+        f"packaging keyword. Using generic container description that preserves the material "
+        f"name. If this material should map to a specific packaging shape, add its keyword "
+        f"to _get_packaging_type() in main.py and the matching branch in "
+        f"PromptEngineeringService.generateEnrichedPrompt() in Flutter."
+    )
+    return (
+        f"hyperrealistic 3D commercial packaging container mockup made of {material}",
+        f"custom packaging container made of {material}, with printed front label panel, "
+        f"realistic texture and finish appropriate to {material}, crisp edges, studio lighting"
+    )
 
 
 def build_prompt(
@@ -158,7 +237,8 @@ def build_prompt(
         f"CULTURAL PATTERN: The outer background of the packaging is decorated with authentic {motif_name} traditional ethnic motif from {kabupaten}, {region}, South Sulawesi — "
         f"seamlessly TILING, REPEATING geometric ornamental batik pattern at identical scale across ALL panels, framing the central white label cleanly. "
         f"MOTIF RULES: The pattern MUST tile perfectly at all fold edges — no shifting, no drift, no broken fragments. "
-        f"MATERIAL: {material} material texture and finish. "
+        f"MATERIAL: {material} material texture and finish. This is the ACTUAL packaging material — the container "
+        f"shape and surface finish MUST visually match {material}, not any other material. "
         f"{color_guide}"
         f"{badges}"
         f"STYLE: {market_style}, photorealistic 3D render, studio product photography, "
@@ -227,14 +307,45 @@ def generate_design(data: DesignRequest):
         material=data.material,
     )
 
-    # Resolve reference image based on priority rules (only motif/category refs, NOT sketch)
-    # We skip user's sketch to avoid image-to-image mode that distorts the packaging output
+    # Resolve reference image based on priority rules.
+    #
+    # FIX (updated): use_category_as_reference is still NOT honored — category/
+    # product photos are pictures of food/drink, not packaging or motif texture,
+    # and using them as an image-to-image reference was causing packaging-shape
+    # mismatches.
+    #
+    # use_motif_as_reference IS honored again, but resolve_init_image() now
+    # returns it with source "motif_image", which we use here to pick a very
+    # LOW image_strength (MOTIF_IMAGE_STRENGTH) — enough to nudge color/texture
+    # toward the real dataset motif artwork, without letting it override the
+    # packaging shape/material the way the old 0.65 strength did.
+    from app.services.stability_client import INIT_IMAGE_STRENGTH, MOTIF_IMAGE_STRENGTH
+
     init_image_bytes, init_source = None, None
-    if getattr(data, "use_motif_as_reference", False) or getattr(data, "use_category_as_reference", False):
+    if getattr(data, "image", None):
         init_image_bytes, init_source = resolve_init_image(data)
+    elif getattr(data, "use_motif_as_reference", False):
+        init_image_bytes, init_source = resolve_init_image(data)
+    elif getattr(data, "use_category_as_reference", False):
+        print(
+            "[INFO] use_category_as_reference requested but ignored: category/product "
+            "photos are not valid packaging references and were causing packaging-shape "
+            "mismatches. Falling back to text-to-image for this reference."
+        )
+
+    image_strength = MOTIF_IMAGE_STRENGTH if init_source == "motif_image" else INIT_IMAGE_STRENGTH
+    print(
+        f"[GENERATE /generate] material='{data.material}' init_source={init_source or 'none (text-to-image)'} "
+        f"image_strength={image_strength if init_image_bytes else 'n/a'}"
+    )
 
     # Generate 4 alternative designs using Stability AI API
-    generated_images = generate_stability_image(prompt, init_image_bytes=init_image_bytes, num_samples=4)
+    generated_images = generate_stability_image(
+        prompt,
+        init_image_bytes=init_image_bytes,
+        num_samples=4,
+        image_strength=image_strength,
+    )
 
     # generated_images is a list[str]; provide backward-compat single field too
     first_image = generated_images[0] if generated_images else None
@@ -342,11 +453,19 @@ async def generate_design_complete(
 ):
     """
     Form-data endpoint compatible with ApiService.generateDesignComplete from Flutter.
-    
+
     IMPORTANT: sketch is received but NOT used as init_image.
     Using sketch as init_image causes image-to-image mode which makes the AI
     reproduce the sketch structure instead of designing proper packaging.
     The prompt alone (text-to-image) produces much better packaging designs.
+
+    FIX: productImagePath is likewise NOT used as init_image anymore. The dataset
+    product image is a photo of the FOOD/DRINK product itself, not of packaging —
+    using it as an image-to-image reference pulled the generated packaging shape
+    and texture toward the food photo instead of the requested packaging material,
+    causing material mismatches (e.g. asking for "Standup Pouch" but getting a shape
+    that resembles the product photo). We now always use pure text-to-image here,
+    and instead make sure the material is stated clearly and repeatedly in the prompt.
     """
     # Read sketch if provided (but we won't use it as init_image)
     _sketch_bytes = await sketch.read() if sketch else None
@@ -356,18 +475,23 @@ async def generate_design_complete(
     motif_name = motif if motif else "Khas Sulsel Motif"
     halal_flag = isHalal.lower() in ("true", "1", "yes")
 
+    # Resolve packaging shape for the prefix (material-first logic, same as _get_packaging_type)
+    pack_type_prefix, _ = _get_packaging_type(category, material)
+
     if enrichedPrompt and enrichedPrompt.strip():
-        # FIX E: Kirim FULL enrichedPrompt dari Flutter tanpa truncation.
-        # Backend HANYA menambahkan prefix teknis ringan dan suffix — tidak memotong
-        # atau menimpa konten kaya (motif, warna, identitas dataset) dari PromptEngineeringService.
+        # The enrichedPrompt from Flutter already states MATERIAL & SHAPE at its own
+        # top line ("MATERIAL & SHAPE (MOST IMPORTANT — MUST MATCH EXACTLY): ...").
+        # We prepend a SHORT backend prefix that also states material + shape so the
+        # information appears TWICE at the very beginning of the final prompt —
+        # critical because truncation from the END must never remove it.
+        # The prefix is kept non-redundant with the negative_prompt to avoid
+        # wasting the 2000-char budget on duplicated prohibitions.
         base = enrichedPrompt.strip()
         prompt = (
-            f"Commercial PACKAGING DESIGN MOCKUP — professional print-ready product packaging "
-            f"for '{productName or prod_label}' ({category}). "
-            f"Material: {material}. "
-            f"Show ONLY the packaging container/box, NOT the food product itself. "
-            f"3D render, studio photography, clean white background, photorealistic, sharp focus, 8K. "
-            f"\n\n{base}"
+            f"PACKAGING MOCKUP. MATERIAL: {material}. "
+            f"SHAPE: {pack_type_prefix}. "
+            f"Show the container only — not the food or drink product itself.\n\n"
+            f"{base}"
         )
     else:
         description = f"South Sulawesi {category.lower()} product '{prod_label}', target market: {targetMarket}."
@@ -391,29 +515,28 @@ async def generate_design_complete(
             target_market=targetMarket,
         )
 
-    print(f"[GENERATE] Product: {productName} | Motif: {motif_name} | Material: {material}")
-    print(f"[GENERATE] Prompt preview: {prompt[:200]}...")
+    prompt_len_before = len(prompt)
+    print(f"[GENERATE] Product: {productName} | Category: {category} | Motif: {motif_name} | Material: {material}")
+    print(f"[GENERATE] packaging_shape resolved: '{pack_type_prefix[:80]}...' (via _get_packaging_type)")
+    print(f"[GENERATE] Prompt length before truncation: {prompt_len_before} chars")
+    print(f"[GENERATE] Prompt preview (first 300 chars): {prompt[:300]}...")
+    print("[DECISION] init_source=none (text-to-image only — productImagePath intentionally ignored; see docstring)")
 
-    # Resolve init_image from dataset product image if provided
-    # This enables image-to-image mode for higher visual relevance to the actual product
-    init_image_bytes: Optional[bytes] = None
+    # NOTE: productImagePath is intentionally NOT loaded as init_image anymore.
+    # The dataset product image is a photo of the FOOD/DRINK itself, not of
+    # packaging — using it as image-to-image reference pulled the generated
+    # packaging shape toward the food photo, causing material mismatches.
     if productImagePath and productImagePath.strip():
-        from app.services.dataset_repository import DATASET_DIR, validate_safe_path
-        from fastapi import HTTPException as HEx
-        try:
-            decoded = productImagePath.strip().replace("%20", " ")
-            target = DATASET_DIR / decoded
-            safe_path = validate_safe_path(target)
-            with open(safe_path, "rb") as f:
-                init_image_bytes = f.read()
-            print(f"[GENERATE] Using dataset product image as init_image: {decoded} ({len(init_image_bytes)} bytes)")
-        except Exception as e:
-            print(f"[GENERATE] Warning: Could not load product image '{productImagePath}': {e}")
-            init_image_bytes = None
+        print(
+            f"[DECISION] productImagePath='{productImagePath}' received but IGNORED for "
+            f"image-to-image to prevent packaging-material mismatch. "
+            f"Using pure text-to-image. (Poin 1: foto produk bukan referensi kemasan)"
+        )
+    else:
+        print("[DECISION] productImagePath not provided. Using pure text-to-image (no init_image).")
+    init_image_bytes: Optional[bytes] = None
 
-    # Generate 4 alternative designs
-    # If init_image_bytes is set: image-to-image (higher product relevance)
-    # If None: text-to-image (standard mode)
+    # Generate 4 alternative designs (always text-to-image in this endpoint)
     generated_images = generate_stability_image(
         prompt,
         init_image_bytes=init_image_bytes,
@@ -443,7 +566,9 @@ async def generate_design_complete(
             "category": category,
             "motif": motif,
             "material": material,
+            "packaging_shape": pack_type_prefix,
             "mode": "text_to_image",
+            "prompt_length": prompt_len_before,
             "sketch_received": _sketch_bytes is not None,
         }
     }
